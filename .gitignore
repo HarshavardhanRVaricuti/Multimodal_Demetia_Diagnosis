@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+
+# Data (large, generated, or sensitive)
+jsonl_files/
+jsonl_files_normalized/
+preprocessed_data/
+
+# Experiment results (regenerable)
+results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.cursor/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# PDFs (large binary files)
+*.pdf

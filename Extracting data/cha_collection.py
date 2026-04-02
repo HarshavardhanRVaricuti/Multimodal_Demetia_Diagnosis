@@ -7,19 +7,58 @@ from dataclasses import asdict
 
 
 class CHACollection(Collection):
+    def __init__(self, path: str, language: str, override_diagnosis: str = None,
+                 subfolder_label_map: dict = None, filename_label_map: dict = None):
+        super().__init__(path, language)
+        self.override_diagnosis = override_diagnosis
+        self.subfolder_label_map = subfolder_label_map
+        self.filename_label_map = filename_label_map
+
+    def _get_parser(self) -> Callable[[dict, str], None]:
+        if self.language in ("english", "chinese", "korean", "german", "greek"):
+            return self._parse_line_general
+        elif self.language == "spanish":
+            return self._parse_line_spanish
+        else:
+            raise ValueError(f"Unsupported language: {self.language}")
+
+    def _infer_label_from_filename(self, filename: str):
+        """Match filename against filename_label_map prefixes."""
+        if not self.filename_label_map:
+            return None
+        basename = os.path.splitext(filename)[0]
+        for prefix, label in self.filename_label_map.items():
+            if basename.startswith(prefix):
+                return label
+        return None
+
+    def _collect_cha_files(self):
+        """Yield (file_path, folder_diagnosis, parse_func) tuples, walking subfolders if needed."""
+        parse_func = self._get_parser()
+        if self.subfolder_label_map:
+            for subfolder, label in self.subfolder_label_map.items():
+                sub_path = os.path.join(self.path, subfolder)
+                if not os.path.isdir(sub_path):
+                    continue
+                for root, _, files in os.walk(sub_path):
+                    for fname in files:
+                        if fname.endswith(".cha"):
+                            yield os.path.join(root, fname), label, parse_func
+        else:
+            for root, _, files in os.walk(self.path):
+                for fname in files:
+                    if fname.endswith(".cha"):
+                        label = self._infer_label_from_filename(fname)
+                        yield os.path.join(root, fname), label, parse_func
+
     def __iter__(self) -> Iterator[RawDataPoint]:
-        """
-        Iterate through all .cha files in the specified path and yield raw data points.
-        """
-        for filename in os.listdir(self.path):
-            if filename.endswith(".cha"):
-                file_path = os.path.join(self.path, filename)
-                if self.language == "english" or self.language == "chinese":
-                    yield from self.parse_cha_file(file_path, self._parse_line_english_chinese)
-                elif self.language == "spanish":
-                    yield from self.parse_cha_file(file_path, self._parse_line_spanish)
-                else:
-                    raise ValueError(f"Unsupported language: {self.language}")
+        for file_path, folder_diagnosis, parse_func in self._collect_cha_files():
+            for datapoint in self.parse_cha_file(file_path, parse_func):
+                if self.override_diagnosis:
+                    datapoint["Diagnosis"] = self.override_diagnosis
+                elif folder_diagnosis and datapoint["Diagnosis"] == "Unknown":
+                    datapoint["Diagnosis"] = folder_diagnosis
+                yield datapoint
 
     def parse_cha_file(self, file_path: str, parse_line_func: Callable[[dict, str], None]) -> Iterator[RawDataPoint]:
         """
@@ -65,56 +104,64 @@ class CHACollection(Collection):
 
         yield info
     
-    def _parse_line_english_chinese(self, info: dict, line: str,file_path: str): # Chinese Lu datset from DementiaBank
-        """
-        Language-specific line parser for English.
-        """
+    def _parse_line_general(self, info: dict, line: str, file_path: str):
+        """General line parser for English, Chinese, Korean, German, Greek."""
         if line.startswith("@PID:"):
-            info["PID"] = line.split(":")[1].strip()
+            info["PID"] = line.split(":", 1)[1].strip()
         elif line.startswith("@Date:"):
-            info["Date"] = line.split(":")[1].strip()
+            info["Date"] = line.split(":", 1)[1].strip()
         elif line.startswith("@Languages:"):
-            info["Languages"] = line.split(":")[1].strip()
-        elif line.startswith("@Participants:"): # e.g., PAR Participant, INV Investigator
-            info["Participants"] = line.split(":")[1].strip()
+            info["Languages"] = line.split(":", 1)[1].strip()
+        elif line.startswith("@Participants:"):
+            info["Participants"] = line.split(":", 1)[1].strip()
         elif line.startswith("@Situation:"):
-            info["Task"].append("Situation: "+line.split(":")[1].strip())
+            info["Task"].append("Situation: " + line.split(":", 1)[1].strip())
         elif line.startswith("@Activities:"):
-            info["Task"].append("Activities: "+line.split(":")[1].strip())
+            info["Task"].append("Activities: " + line.split(":", 1)[1].strip())
         elif line.startswith("@Bg:"):
-            info["Task"].append(line.split(":")[1].strip())
+            info["Task"].append(line.split(":", 1)[1].strip())
         elif line.startswith("@G:"):
-            info["Task"].append(line.split(":")[1].strip())
-        elif line.startswith("@comment:"):
-            info["Comment"] = line.split(":")[1].strip()
+            info["Task"].append(line.split(":", 1)[1].strip())
+        elif line.startswith("@Transcriber:"):
+            info["Transcriber"] = line.split(":", 1)[1].strip()
+        elif line.startswith("@Location:"):
+            info["Location"] = line.split(":", 1)[1].strip()
+        elif line.startswith("@Time Duration:"):
+            info["Duration"] = line.split(":", 1)[1].strip()
+        elif line.startswith("@comment:") or line.startswith("@Comment:"):
+            info["Comment"] = line.split(":", 1)[1].strip()
         elif line.startswith("@ID:") and "Participant" in line:
             parts = line.split("|")
-            info["Languages"] = parts[0].split()[-1].strip()
-            info["Dataset"] = parts[1].strip()
-            info["Diagnosis"] = parts[5].strip() 
-            age_info = parts[3].split(';')[0].strip()
-            if age_info.isdigit():
-                info["age"] = int(age_info)
-            info["gender"] = parts[4].strip()
-            if parts[9].isdigit():
-                info["MMSE"] = int(parts[9])
-                #info["Moca"] = int(parts[9]) # Dalware
-            elif parts[8].isdigit():
-                info["MMSE"] = int(parts[8])
-                #info["Moca"] = int(parts[8]) # Baycrest dataset
+            if len(parts) > 5:
+                info["Languages"] = parts[0].split()[-1].strip()
+                info["Dataset"] = parts[1].strip()
+                diag = parts[5].strip()
+                if diag:
+                    info["Diagnosis"] = diag
+                age_info = parts[3].split(';')[0].strip()
+                if age_info.isdigit():
+                    info["age"] = int(age_info)
+                if len(parts) > 4:
+                    info["gender"] = parts[4].strip()
+                if len(parts) > 9 and parts[9].strip().isdigit():
+                    info["MMSE"] = int(parts[9])
+                elif len(parts) > 8 and parts[8].strip().isdigit():
+                    info["MMSE"] = int(parts[8])
         elif line.startswith("@Media:"):
-            media_parts = line.split(":")[1].strip().split(",")
+            media_parts = line.split(":", 1)[1].strip().split(",")
             if len(media_parts) > 1:
                 info["File_ID"] = media_parts[0].strip()
                 info["Media"] = media_parts[1].strip()
-        elif line.startswith("*PAR:"):
-            participant_text = line.replace("*PAR:", "").strip()
+            elif media_parts:
+                info["File_ID"] = media_parts[0].strip()
+        elif line.startswith("*PAR:") or line.startswith("*PAR0:") or line.startswith("*PAR1:"):
+            participant_text = line.split(":", 1)[1].strip()
             info["text_participant"].append(participant_text)
-            info["text_interviewer_participant"].append("PAR: "+participant_text)
+            info["text_interviewer_participant"].append("PAR: " + participant_text)
         elif line.startswith("*INV:"):
-            interviewer_text = line.replace("*INV:", "").strip()
+            interviewer_text = line.split(":", 1)[1].strip()
             info["text_interviewer"].append(interviewer_text)
-            info["text_interviewer_participant"].append("INT: "+interviewer_text)
+            info["text_interviewer_participant"].append("INT: " + interviewer_text)
             
 
     def _parse_line_spanish(self, info: dict, line: str,file_path: str):
@@ -228,26 +275,27 @@ class CHACollection(Collection):
 
 
 
-path_to_cha_files =  "path_to_cha_files" # path to the folder containing .cha files
-
-
-
-
 if __name__ == '__main__':
-    collection = CHACollection(path_to_cha_files,language="chinese")
-    #collection = CHACollection(path_to_cha_files,language="spanish")
-    #collection = CHACollection(path_to_cha_files,language="english")
-    # Making the file name for the output file
-    last_words= path_to_cha_files.split('/')[-3:]
-    output_file_name= f"{last_words[0]}_{last_words[1]}_{last_words[2]}_output.jsonl"
-    
-    # Writing the normalized data to the output file
-    output_file_path = os.path.join("jsonl_files", output_file_name)
-    with open(output_file_path, "w",encoding="utf-8") as outfile:
+    import argparse
+    parser = argparse.ArgumentParser(description="Extract .cha files to JSONL")
+    parser.add_argument('--path', required=True, help="Path to folder containing .cha files")
+    parser.add_argument('--language', required=True, help="Language: english, chinese, spanish, korean, german, greek")
+    parser.add_argument('--output', required=True, help="Output JSONL file path")
+    parser.add_argument('--override-diagnosis', default=None, help="Force all samples to this diagnosis label")
+    args = parser.parse_args()
+
+    path = os.path.expanduser(args.path)
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    collection = CHACollection(path, language=args.language, override_diagnosis=args.override_diagnosis)
+
+    count = 0
+    with open(args.output, "w", encoding="utf-8") as outfile:
         for normalized_datapoint in collection.get_normalized_data():
             normalized_dict = asdict(normalized_datapoint)
             json.dump(normalized_dict, outfile, ensure_ascii=False)
             outfile.write("\n")
+            count += 1
+    print(f"Extracted {count} samples to {args.output}")
             
 
     

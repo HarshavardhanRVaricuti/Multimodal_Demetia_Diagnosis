@@ -1,120 +1,170 @@
-import pandas as pd
+"""
+Multilingual E5-large embedding + sklearn classifier baseline (matches MultiConAD paper Section 4.2).
+
+Classifiers: Decision Tree, Random Forest, SVM (linear+rbf), Logistic Regression
+Grids: DT max_depth=[10,20,30], RF n_estimators=[50,100,200],
+       SVM C=[0.1,1,10] kernel=[linear,rbf], LR C=[0.1,1,10]
+Metric: accuracy (GridSearchCV scoring)
+
+Usage:
+    python Experiments/e5_larg_classifier.py --test_language en --task binary --mode cleaned
+    python Experiments/e5_larg_classifier.py --test_language ko --task ternary --mode cleaned --train_languages en es zh el
+"""
+import os
+import sys
+import argparse
+import json
+
 import numpy as np
+import pandas as pd
+import torch
+from sentence_transformers import SentenceTransformer
 from sklearn.model_selection import GridSearchCV
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report
-from sentence_transformers import SentenceTransformer
-import torch
-import argparse
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--test_language', required=True)
-parser.add_argument('--task', required=True)
-parser.add_argument('--translated', required=True)
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+AVAILABLE_LANGUAGES = ["en", "es", "zh", "el", "ko", "de"]
+TEXT_COL = "text_clean"
 
-args_slurm = parser.parse_args()
-
-path_to_data_folder = "path_to_data_folder"
-train_en = pd.read_json(path_to_data_folder + "/train_en_AD_Dem_info.jsonl", lines=True)
-test_en = pd.read_json(path_to_data_folder + "/test_en_AD_Dem_info.jsonl", lines=True)
-
-
-train_spa = pd.read_json(path_to_data_folder + "/translated_train_df_spa.jsonl", lines=True)
-train_gr = pd.read_json(path_to_data_folder+"/translated_train_gr.jsonl", lines=True)
-train_cha = pd.read_json(path_to_data_folder + "/translated_train_cha.jsonl", lines=True)
-test_spa=pd.read_json(path_to_data_folder + "/translated_test_df_spa.jsonl", lines=True)
-test_gr= pd.read_json(path_to_data_folder + "/translated_test_gr.jsonl", lines=True)
-test_cha= pd.read_json(path_to_data_folder + "/translated_test_cha.jsonl", lines=True)
-
-# Multi-lingual training and testing
-train_dfs = [train_en, train_gr, train_cha, train_spa]
-test_dfs = {
-    'en': test_en,
-    'gr': test_gr,
-    'cha': test_cha,
-    'spa': test_spa
-}
-
-# Mono-lingual training and testing
-train_dfs = [train_spa]
-test_dfs = {
-    'spa': test_spa
+CLASSIFIERS = {
+    "DT": (DecisionTreeClassifier(random_state=42), {"max_depth": [10, 20, 30]}),
+    "RF": (RandomForestClassifier(random_state=42), {"n_estimators": [50, 100, 200]}),
+    "SVM": (SVC(random_state=42), {"C": [0.1, 1, 10], "kernel": ["linear", "rbf"]}),
+    "LR": (LogisticRegression(random_state=42, max_iter=1000), {"C": [0.1, 1, 10]}),
 }
 
 
-# Add a column for translated text for English dataset
-if args_slurm.translated== "yes":
-    train_en['translated'] = train_en['Text_interviewer_participant']
-    test_en['translated'] = test_en['Text_interviewer_participant']
+def parse_args():
+    parser = argparse.ArgumentParser(description="E5-large embedding baseline classifier")
+    parser.add_argument("--test_language", required=True, choices=AVAILABLE_LANGUAGES)
+    parser.add_argument("--task", required=True, choices=["binary", "ternary"])
+    parser.add_argument("--mode", default="cleaned", choices=["cleaned", "verbatim"])
+    parser.add_argument(
+        "--train_languages", nargs="+", default=None,
+        help="Languages to include in training. Default: same as test (monolingual)."
+    )
+    parser.add_argument(
+        "--data_dir", default=None,
+        help="Base preprocessed data dir (default: preprocessed_data/)"
+    )
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--output_json", default=None, help="Save results to JSON file")
+    return parser.parse_args()
 
-def extract_embeddings(df, text_column, label_column):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = SentenceTransformer('intfloat/multilingual-e5-large').to(device)
-    texts = ["passage: " + text for text in df[text_column].tolist()]
-    labels = df[label_column].tolist()
-    embeddings = model.encode(texts, normalize_embeddings=True,device=device)
-    return np.vstack(embeddings), np.array(labels)
 
-def classify_language_dataset_e5(train_dfs, test_dfs, test_language,random_state=42,task=None,translated=None):
-    # Combine the train sets from all languages
-    train_combined = pd.concat(train_dfs, ignore_index=True)
-    if any(df.equals(train_en) for df in train_dfs):
-        train_combined['Diagnosis'] = train_combined['Diagnosis'].replace('AD', 'Dementia')
-    if task== "binary":
-        train_combined = train_combined[train_combined['Diagnosis'] != 'MCI']
-    # Extract embeddings and labels for the combined train set
-    if translated == "yes":  
-        X_train, y_train = extract_embeddings(train_combined, 'translated', 'Diagnosis')
-    else:
-        X_train, y_train = extract_embeddings(train_combined, 'Text_interviewer_participant', 'Diagnosis')
-    
-    
-    # Select the appropriate test set based on the test_language argument
+def load_split(data_dir, mode, split, lang):
+    path = os.path.join(data_dir, mode, f"{split}_{lang}.jsonl")
+    if not os.path.isfile(path):
+        return None
+    return pd.read_json(path, lines=True)
 
-    test_df = test_dfs[test_language]
-    if any(df.equals(train_en) for df in train_dfs):
-         test_df['Diagnosis'] = test_df['Diagnosis'].replace('AD', 'Dementia')
-    if task == "binary":
-        test_df = test_df[test_df['Diagnosis'] != 'MCI']
-    
-    if translated == "yes":
-        X_test, y_test = extract_embeddings(test_df, 'translated', 'Diagnosis')
-    else:
-       X_test, y_test = extract_embeddings(test_df, 'Text_interviewer_participant', 'Diagnosis')
-    
-    
-    # Define classifiers and their hyperparameters for grid search
-    classifiers = {
-        'Decision Tree': (DecisionTreeClassifier(random_state=random_state), {'max_depth': [10, 20, 30]}),
-        'Random Forest': (RandomForestClassifier(random_state=random_state), {'n_estimators': [50, 100, 200]}),
-        'SVM': (SVC(random_state=random_state), {'C': [0.1, 1, 10], 'kernel': ['linear', 'rbf']}),
-        'Logistic Regression': (LogisticRegression(random_state=random_state), {'C': [0.1, 1, 10]})
-    }
-    
-    # Perform grid search and classification
-    for name, (clf, params) in classifiers.items():
-        grid_search = GridSearchCV(clf, params, cv=5, scoring='accuracy')
+
+def extract_embeddings(texts, model, device, batch_size=32):
+    prefixed = ["passage: " + t for t in texts]
+    embeddings = model.encode(
+        prefixed, normalize_embeddings=True, device=device,
+        batch_size=batch_size, show_progress_bar=True
+    )
+    return np.vstack(embeddings)
+
+
+def run_classifiers(X_train, y_train, X_test, y_test):
+    """Run all 4 classifiers and return results dict."""
+    results = {}
+    for name, (clf_template, params) in CLASSIFIERS.items():
+        grid_search = GridSearchCV(clf_template, params, cv=5, scoring="accuracy")
         grid_search.fit(X_train, y_train)
-        
-        # Predict on the test set
         y_pred = grid_search.predict(X_test)
-        
-        # Print classification report
-        print(f"Classifier: {name}")
-        print(f"Best Parameters: {grid_search.best_params_}")
-        print(f"Test Set Language: {test_language}")
-        print(classification_report(y_test, y_pred))
-        print("\n")
-    print("test dataset: ", test_language)
-    for df in train_dfs:
-        df_name = [name for name, value in globals().items() if value is df][0]
-        print(f"DataFrame in training set: {df_name}")
-    print(task)
-    print("e5_large")
-    print("Translation status: ",translated)
+
+        acc = accuracy_score(y_test, y_pred)
+        report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
+        cm = confusion_matrix(y_test, y_pred).tolist()
+
+        results[name] = {
+            "accuracy": round(acc, 4),
+            "best_params": {k: str(v) for k, v in grid_search.best_params_.items()},
+            "classification_report": report,
+            "confusion_matrix": cm,
+        }
+
+        print(f"  {name}: acc={acc:.4f} | params={grid_search.best_params_}")
+
+    return results
 
 
-classify_language_dataset_e5(train_dfs, test_dfs, args_slurm.test_language, task=args_slurm.task,translated=args_slurm.translated)
+def main():
+    args = parse_args()
+    data_dir = args.data_dir or os.path.join(project_root, "preprocessed_data")
+    train_langs = args.train_languages or [args.test_language]
+
+    train_dfs = []
+    for lang in train_langs:
+        df = load_split(data_dir, args.mode, "train", lang)
+        if df is not None:
+            train_dfs.append(df)
+            print(f"  Loaded train_{lang}: {len(df)} samples")
+
+    if not train_dfs:
+        print("ERROR: No training data found.")
+        sys.exit(1)
+
+    train_combined = pd.concat(train_dfs, ignore_index=True)
+
+    test_df = load_split(data_dir, args.mode, "test", args.test_language)
+    if test_df is None:
+        print(f"ERROR: No test data for {args.test_language}")
+        sys.exit(1)
+    print(f"  Loaded test_{args.test_language}: {len(test_df)} samples")
+
+    if args.task == "binary":
+        train_combined = train_combined[train_combined["Diagnosis"] != "MCI"]
+        test_df = test_df[test_df["Diagnosis"] != "MCI"]
+
+    X_train_text = train_combined[TEXT_COL].tolist()
+    y_train = train_combined["Diagnosis"].values
+    X_test_text = test_df[TEXT_COL].tolist()
+    y_test = test_df["Diagnosis"].values
+
+    setting = "monolingual" if len(train_langs) == 1 else "combined-multilingual"
+    print(f"\n{'='*60}")
+    print(f"E5-large | {setting} | task={args.task} | test={args.test_language}")
+    print(f"Train langs: {train_langs}")
+    print(f"Train: {len(X_train_text)} | Test: {len(X_test_text)}")
+    print(f"Train dist: {pd.Series(y_train).value_counts().to_dict()}")
+    print(f"Test dist:  {pd.Series(y_test).value_counts().to_dict()}")
+    print(f"{'='*60}")
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"\nLoading multilingual-e5-large on {device}...")
+    model = SentenceTransformer("intfloat/multilingual-e5-large").to(device)
+
+    print("Encoding training set...")
+    X_train = extract_embeddings(X_train_text, model, device, args.batch_size)
+    print("Encoding test set...")
+    X_test = extract_embeddings(X_test_text, model, device, args.batch_size)
+
+    results = run_classifiers(X_train, y_train, X_test, y_test)
+
+    if args.output_json:
+        os.makedirs(os.path.dirname(args.output_json) or ".", exist_ok=True)
+        output = {
+            "representation": "dense",
+            "setting": setting,
+            "task": args.task,
+            "test_language": args.test_language,
+            "train_languages": train_langs,
+            "train_size": len(X_train_text),
+            "test_size": len(X_test_text),
+            "results": results,
+        }
+        with open(args.output_json, "w") as f:
+            json.dump(output, f, indent=2)
+        print(f"\nResults saved to {args.output_json}")
+
+
+if __name__ == "__main__":
+    main()

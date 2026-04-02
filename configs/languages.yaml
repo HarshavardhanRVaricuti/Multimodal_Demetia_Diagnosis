@@ -1,0 +1,151 @@
+data_root: ~/Documents/DementiaBank_data
+
+languages:
+  en:
+    name: English
+    parser_language: english
+    role: train  # train = enough data for training + eval
+    datasets:
+      - name: Pitt
+        path: Pitt-orig
+        has_subfolders: true
+        subfolder_label_map:
+          Control: HC
+          Dementia: Dementia
+      - name: Lu
+        path: Lu
+        has_subfolders: true
+        subfolder_label_map:
+          Control: HC
+          Dementia: Dementia
+      - name: Baycrest
+        path: Baycrest
+        has_subfolders: false
+      - name: VAS
+        path: VAS
+        has_subfolders: false
+      - name: Kempler
+        path: Kempler
+        has_subfolders: false
+        override_diagnosis: Dementia  # PPA corpus, all patients
+      - name: WLS
+        path: WLS
+        has_subfolders: false
+        train_only: true  # Labels from verbal fluency thresholds; training only per paper
+      - name: Delaware
+        path: Delaware
+        has_subfolders: true
+        subfolder_label_map:
+          Control: HC
+          MCI: MCI
+      - name: Hopkins
+        path: Hopkins
+        has_subfolders: false
+        override_diagnosis: Dementia  # PPA -> Dementia
+      - name: Baycrest-PPA
+        path: Baycrest-PPA
+        has_subfolders: false
+        override_diagnosis: Dementia  # PPA -> Dementia
+      - name: DePaul
+        path: DePaul
+        has_subfolders: false
+        override_diagnosis: Dementia  # PPA -> Dementia
+      - name: Holland
+        path: Holland
+        has_subfolders: false
+        exclude: true  # Too small (3 files) and no diagnosis labels
+      - name: Lanzi
+        path: Lanzi
+        has_subfolders: true
+        subfolder_label_map:
+          Group1: Dementia
+          Group2: Dementia
+          Treatment: Dementia
+
+  es:
+    name: Spanish
+    parser_language: spanish
+    role: train
+    datasets:
+      - name: Ivanova
+        path: Ivanova
+        has_subfolders: true
+        subfolder_label_map:
+          AD: Dementia
+          HC: HC
+          MCI: MCI
+      - name: PerLA
+        path: PerLA
+        has_subfolders: false
+
+  zh:
+    name: Chinese
+    parser_language: chinese
+    role: train
+    datasets:
+      - name: Chou
+        path: Chou
+        has_subfolders: true
+        subfolder_label_map:
+          HC: HC
+          MCI: MCI
+      - name: Lu_Mandarin
+        path: Lu_Mandarin
+        has_subfolders: false
+        override_diagnosis: Dementia  # All are AD patients per corpus docs
+      - name: Ye
+        path: Ye
+        has_subfolders: false
+
+  el:
+    name: Greek
+    parser_language: greek
+    role: train
+    datasets:
+      - name: Dem@Care
+        path: Dem@Care
+        has_subfolders: true
+        subfolder_label_map:
+          short/AD: Dementia
+          short/HC: HC
+          short/MCI: MCI
+          long/AD: Dementia
+          long/HC: HC
+          long/MCI: MCI
+          pilot/patients: Dementia
+          pilot/control: HC
+
+  ko:
+    name: Korean
+    parser_language: korean
+    role: eval  # small dataset, zero-shot / few-shot LoRA target
+    datasets:
+      - name: Kang
+        path: Kang
+        has_subfolders: true
+        subfolder_label_map:
+          HC: HC
+          MCI: MCI
+
+  de:
+    name: German
+    parser_language: german
+    role: eval  # 14 files, zero-shot eval only
+    datasets:
+      - name: Jalvingh
+        path: Jalvingh
+        has_subfolders: false
+        filename_label_map:
+          FTD: Dementia
+          PPA: Dementia
+          Park_Dement: Dementia
+          Park_MCI: MCI
+
+  nan:
+    name: Taiwanese
+    parser_language: taiwanese
+    role: deferred
+    datasets:
+      - name: Lu_Taiwanese
+        path: Lu_Taiwanese
+        has_subfolders: false
