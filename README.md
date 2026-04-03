@@ -3,7 +3,38 @@
 This repository provides the complete codebase and data processing pipeline for the following submission: 
 https://arxiv.org/abs/2502.19208
 
+**Current Progress**
 
+Since the project's inception, we have completed **Milestone 1 (Data Infrastructure and Audit)** and **Milestone 2 (Text-Only Baseline Pipeline)**, and are currently transitioning into **Milestone 3 (Multimodal Fusion Architecture)**.
+
+### Milestone 1: Data Infrastructure and Corpus Assembly
+We built an end-to-end, configuration-driven data pipeline to extract, normalize, preprocess, and split multilingual transcript data from DementiaBank `.cha` files.
+* **Centralized Registry:** Defined paths, parsers, and label mappings in `configs/languages.yaml` for 20 corpora across 6 languages (English, Spanish, Chinese, Greek, Korean, German).
+* **Flexible Parsing:** Extended the `CHACollection` parser to handle varying label-inference strategies, including subfolder maps, filename prefixes, and per-corpus overrides.
+* **Label Normalization:** Mapped 20+ raw diagnoses to a 3-class taxonomy (HC, MCI, Dementia) via `scripts/normalize_labels.py`, matching the MultiConAD methodology (e.g., handling WLS verbal-fluency thresholds).
+* **Text Preprocessing & Orchestration:** Implemented `scripts/preprocess_text.py` for both verbatim and cleaned text modes, along with proper stratified 80/20 train-test splits. Executed batch extractions via `scripts/extract_all.py`.
+
+### Milestone 2: Text-Only Baseline Replication
+We replicated the paper's shallow-classifier baselines to validate our data pipeline before introducing transformer-based architectures.
+* **Classifiers Tuned:** Decision Tree, Random Forest, SVM (linear/RBF), and Logistic Regression via 5-fold `GridSearchCV`.
+* **Representations:** Utilized sparse TF-IDF and dense Multilingual E5-large embeddings.
+* **Results:** Executed 32 configuration runs. Compared to the original MultiConAD paper, our pipeline achieved higher accuracies in English (+12% avg) and Chinese (+30% avg), slightly lower in Spanish (-6% avg), and closely matched Greek (+2% avg). Qualitative trends confirmed that MCI remains the most difficult class to distinguish.
+
+### HPC Deployment & Technical Barriers Resolved
+All dense embedding and GPU-intensive experiments were deployed on the TAMU HPRC Grace cluster (A100 40GB).
+* **Environment Integrity:** Resolved SLURM toolchain module conflicts (GCCcore/Python mismatches) by strictly defining module loads.
+* **Data compatibility:** Fixed Pandas 2.x PyArrow backend indexing incompatibilities with scikit-learn by forcing standard NumPy array conversions.
+* **Format Heterogeneity:** Overcame inconsistent dataset architectures by designing modular, pluggable labeling strategies for edge cases like VAS and WLS.
+
+### Upcoming Action Items
+* **Corpus Finalization:** Integrate the remaining iFlyTek dataset (TSV format).
+* **Multimodal Fusion:** Extract Wav2Vec2 XLS-R acoustic features and build the Token-Level Cross-Modal Attention architecture using XLM-RoBERTa Large (with LoRA, r=16).
+* **Objective Tuning:** Implement the ordinal loss function to directly address and reduce the MCI false-negative rate.
+* **Cross-Lingual Transfer:** Train and evaluate language-specific LoRA adapters on Korean and German data.
+
+---
+
+**Original Work (reference)**
 ## **Summary**
 Dementia is a progressive cognitive syndrome with Alzheimer's disease (AD) as the leading cause. Conversation-based AD detection offers a cost-effective alternative to clinical methods, as language dysfunction is an early biomarker of AD. However, most prior research has framed AD detection as a binary classification problem, limiting the ability to identify Mild Cognitive Impairment (MCI)-a crucial stage for early intervention. Also, studies primarily rely on single-language datasets, mainly in English, restricting cross-language generalizability. To address this gap, we make three key contributions. First, we introduce a novel, multilingual dataset for AD detection by unifying 16 publicly available dementia-related conversational datasets. This corpus spans English, Spanish, Chinese, and Greek and incorporates both audio and text data derived from a variety of cognitive assessment tasks. Second, we perform finer-grained classification, including MCI, and evaluate various classifiers using sparse and dense text representations. Third, we conduct experiments in monolingual and multilingual settings, finding that some languages benefit from multilingual training while others perform better independently. This study highlights the challenges in multilingual AD detection and enables future research on both language-specific approaches and techniques aimed at improving model generalization and robustness.
 
