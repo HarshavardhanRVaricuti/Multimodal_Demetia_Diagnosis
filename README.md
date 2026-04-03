@@ -20,7 +20,7 @@ We replicated the paper's shallow-classifier baselines to validate our data pipe
 * **Representations:** Utilized sparse TF-IDF and dense Multilingual E5-large embeddings.
 * **Results:** Executed 32 configuration runs. Compared to the original MultiConAD paper, our pipeline achieved higher accuracies in English (+12% avg) and Chinese (+30% avg), slightly lower in Spanish (-6% avg), and closely matched Greek (+2% avg). Qualitative trends confirmed that MCI remains the most difficult class to distinguish.
 
-### HPC Deployment & Technical Barriers Resolved
+### HPRC Deployment & Technical Barriers Resolved
 All dense embedding and GPU-intensive experiments were deployed on the TAMU HPRC Grace cluster (A100 40GB).
 * **Environment Integrity:** Resolved SLURM toolchain module conflicts (GCCcore/Python mismatches) by strictly defining module loads.
 * **Data compatibility:** Fixed Pandas 2.x PyArrow backend indexing incompatibilities with scikit-learn by forcing standard NumPy array conversions.
